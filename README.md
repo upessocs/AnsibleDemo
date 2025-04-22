@@ -21,11 +21,17 @@ First, let's create 5 Ubuntu-based containers named server1 to server5:
 
 ```bash
 # Generate SSH key pair on the host machine (will be shared with all containers)
-ssh-keygen -t rsa -b 4096 -f ./ansible_key -N ""
+ssh-keygen -t rsa -b 4096 -f ./.ssh/ansible_key -N ""
+chmod 700 ./.ssh
+chmod 600 ./.ssh/ansible_key
+chmod 644 ./.ssh/ansible_key.pub
+
 
 # Create the containers
 for i in {1..5}; do
-  docker run -d --name server$i -v $(pwd)/ansible_key.pub:/root/.ssh/authorized_keys -v $(pwd)/ansible_key:/root/.ssh/id_rsa ubuntu sleep infinity
+  echo -e "\nstarting server${i}\n"
+  docker run -d --name server${i} -v ./.ssh/ansible_key.pub:/root/.ssh/authorized_keys -v ./.ssh/ansible_key:/root/.ssh/id_rsa ubuntu sleep infinity
+  # docker run -d --name server{i} --rm -v $(pwd)/.ssh:~/.ssh ubuntu sleep infinity
 done
 ```
 
@@ -42,15 +48,57 @@ done
 
 ## Step 3: Create Ansible Inventory File
 
+First find IP of docker containers using
+
+```bash
+for i in {1..5}; do
+  echo -e "\n IP if server${i}"
+  docker inspect server${i} | grep IPAddress
+done
+```
+
+
+in my case IPs are `172.17.0.4,172.17.0.5,172.17.0.6,172.17.0.7,172.17.0.8`
+shown as
+
+```bash
+ IP if server1
+            "SecondaryIPAddresses": null,
+            "IPAddress": "172.17.0.4",
+                    "IPAddress": "172.17.0.4",
+
+ IP if server2
+            "SecondaryIPAddresses": null,
+            "IPAddress": "172.17.0.5",
+                    "IPAddress": "172.17.0.5",
+
+ IP if server3
+            "SecondaryIPAddresses": null,
+            "IPAddress": "172.17.0.6",
+                    "IPAddress": "172.17.0.6",
+
+ IP if server4
+            "SecondaryIPAddresses": null,
+            "IPAddress": "172.17.0.7",
+                    "IPAddress": "172.17.0.7",
+
+ IP if server5
+            "SecondaryIPAddresses": null,
+            "IPAddress": "172.17.0.8",
+                    "IPAddress": "172.17.0.8",
+```
+
+
+
 Create `inventory.ini`:
 
 ```ini
 [servers]
-server1 ansible_host=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' server1)
-server2 ansible_host=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' server2)
-server3 ansible_host=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' server3)
-server4 ansible_host=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' server4)
-server5 ansible_host=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' server5)
+server1 ansible_host=172.17.0.4
+server2 ansible_host=172.17.0.5
+server3 ansible_host=172.17.0.6
+server4 ansible_host=172.17.0.7
+server5 ansible_host=172.17.0.8
 
 [servers:vars]
 ansible_user=root
@@ -156,142 +204,6 @@ This exercise demonstrates how Ansible can efficiently manage multiple servers w
 
 
 
-
-
----
-
-# Ansible install 
-
-Here are the steps to install Ansible and set up SSH key-based authentication for managing remote servers:
-
-### **1. Install Ansible**
-
-#### **On Ubuntu/Debian:**
-```bash
-sudo apt update
-sudo apt install -y ansible
-```
-
-#### **On CentOS/RHEL:**
-```bash
-sudo yum install epel-release -y
-sudo yum install ansible -y
-```
-
-#### **On macOS (using Homebrew):**
-```bash
-brew install ansible
-```
-
-#### **Verify Installation:**
-```bash
-ansible --version
-```
-
----
-
-### **2. Generate SSH Key Pair (if not already done)**
-Ansible uses SSH to connect to remote servers. A key pair ensures passwordless authentication.
-
-#### **Generate a new SSH key:**
-```bash
-ssh-keygen -t rsa -b 4096 -f ~/.ssh/ansible_key -N ""
-```
-- `-t rsa`: Specifies RSA encryption
-- `-b 4096`: Uses a 4096-bit key (more secure)
-- `-f ~/.ssh/ansible_key`: Saves the key as `ansible_key` in `.ssh` directory
-- `-N ""`: Sets an empty passphrase (optional, but useful for automation)
-
-#### **Check Generated Keys:**
-```bash
-ls -l ~/.ssh/ansible_key*
-```
-- `ansible_key` → Private key (keep secure)
-- `ansible_key.pub` → Public key (distribute to servers)
-
----
-
-### **3. Copy the Public Key to Remote Servers**
-Ansible needs the public key (`ansible_key.pub`) on all target servers.
-
-#### **Option 1: Manual Copy (for a few servers)**
-```bash
-ssh-copy-id -i ~/.ssh/ansible_key.pub user@remote_server_ip
-```
-(Replace `user` and `remote_server_ip` with actual values.)
-
-#### **Option 2: Automate with Ansible (for multiple servers)**
-Create a playbook (`setup_ssh_keys.yml`):
-```yaml
----
-- name: Deploy SSH keys
-  hosts: all
-  become: yes
-  vars:
-    ansible_user: "your_remote_user"
-    ansible_ssh_private_key_file: "~/.ssh/ansible_key"
-  
-  tasks:
-    - name: Ensure .ssh directory exists
-      file:
-        path: ~/.ssh
-        state: directory
-        mode: '0700'
-
-    - name: Copy public key to authorized_keys
-      ansible.posix.authorized_key:
-        user: "{{ ansible_user }}"
-        state: present
-        key: "{{ lookup('file', '~/.ssh/ansible_key.pub') }}"
-```
-
-Run it:
-```bash
-ansible-playbook -i inventory.ini setup_ssh_keys.yml
-```
-
----
-
-### **4. Configure Ansible to Use the SSH Key**
-Edit (or create) `~/.ansible.cfg`:
-```ini
-[defaults]
-inventory = ./inventory.ini
-private_key_file = ~/.ssh/ansible_key
-host_key_checking = False
-```
-
-Or specify the key in the **inventory file (`inventory.ini`)**:
-```ini
-[webservers]
-server1 ansible_host=192.168.1.10 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/ansible_key
-server2 ansible_host=192.168.1.11 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/ansible_key
-```
-
----
-
-### **5. Test SSH Key-Based Authentication**
-```bash
-ansible all -i inventory.ini -m ping
-```
-- If successful, you’ll see:
-  ```json
-  server1 | SUCCESS => { "ping": "pong" }
-  ```
-
----
-
-### **6. (Optional) Disable Password Authentication (Security Hardening)**
-If you want to enforce key-based SSH only, modify `/etc/ssh/sshd_config` on remote servers:
-```ini
-PasswordAuthentication no
-```
-Then restart SSH:
-```bash
-sudo systemctl restart sshd
-```
-
----
 
 ### **Summary of Key Steps for Installation**
 1. **Install Ansible** (`apt/yum/brew install ansible`).
