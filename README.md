@@ -15,37 +15,59 @@ Ansible is a powerful automation tool that addresses several critical challenges
 
 Let's create a complete setup with 5 Docker containers managed by Ansible.
 
+
+
+
 ## Step 1: Create Docker Containers
+
+first create a ubuntu server image with openssh server installed.
+
+dockerfile
+```dockerfile
+FROM ubuntu
+
+
+RUN apt update -y
+RUN apt install -y python3 python3-pip openssh-server
+RUN mkdir /var/run/sshd
+RUN echo 'root:root' | chpasswd
+RUN echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \
+    echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config
+    
+# RUN ssh-keygen -A
+
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D"]
+```
+
+build this in to ubuntu-server
+```bash
+docker build -t ubuntu-server .
+```
 
 First, let's create 5 Ubuntu-based containers named server1 to server5:
 
 ```bash
 # Generate SSH key pair on the host machine (will be shared with all containers)
+mkdir -p .ssh
 ssh-keygen -t rsa -b 4096 -f ./.ssh/ansible_key -N ""
-chmod 700 ./.ssh
-chmod 600 ./.ssh/ansible_key
-chmod 644 ./.ssh/ansible_key.pub
+cp ./.ssh/ansible_key ~/.ssh/ansible_key
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/ansible_key
+chmod 644 ~/.ssh/ansible_key.pub
+eval $(ssh-agent -s)
+ssh-add ~/.ssh/ansible_key
 
 
 # Create the containers
 for i in {1..5}; do
-  echo -e "\nstarting server${i}\n"
-  docker run -d --name server${i} -v ./.ssh/ansible_key.pub:/root/.ssh/authorized_keys -v ./.ssh/ansible_key:/root/.ssh/id_rsa ubuntu sleep infinity
-  # docker run -d --name server{i} --rm -v $(pwd)/.ssh:~/.ssh ubuntu sleep infinity
+  echo -e "\nstarting server${i} from ubuntu-server image \n"
+  docker run -d --name server${i} -p 220${i}:22 -v ./.ssh/ansible_key.pub:/root/.ssh/authorized_keys -v ./.ssh/ansible_key:/root/.ssh/id_rsa ubuntu-server sleep infinity
 done
 ```
 
-## Step 2: Install Required Software in Containers
-
-We need to SSH into each container briefly to set up SSH server:
-
-```bash
-for i in {1..5}; do
-  docker exec server$i bash -c "apt-get update && apt-get install -y openssh-server python3"
-  docker exec server$i service ssh start
-done
-```
-
+> to stop and remove these containers `for i in {1..5}; do docker stop server${i} && docker rm server${i};done`
 ## Step 3: Create Ansible Inventory File
 
 First find IP of docker containers using
@@ -94,17 +116,20 @@ Create `inventory.ini`:
 
 ```ini
 [servers]
-server1 ansible_host=172.17.0.4
-server2 ansible_host=172.17.0.5
-server3 ansible_host=172.17.0.6
-server4 ansible_host=172.17.0.7
-server5 ansible_host=172.17.0.8
+
+
 
 [servers:vars]
 ansible_user=root
 ansible_ssh_private_key_file=./ansible_key
 ansible_python_interpreter=/usr/bin/python3
 ```
+
+check ansible accesibility/connectivity to servers by pinging to verify ssh key pair.
+
+```bash
+#ansible ping
+ansible -i inventory.ini servers -m ping```
 
 ## Step 4: Create Ansible Playbook
 
