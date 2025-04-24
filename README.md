@@ -214,6 +214,26 @@ EOF
 cat inventory.ini
 ```
 
+it should look something like
+```ini
+[servers]
+172.17.0.3
+172.17.0.4
+172.17.0.5
+172.17.0.6
+server1 ansible_host=localhost ansible_connection=2201
+server2 ansible_host=localhost ansible_connection=2202
+server3 ansible_host=localhost ansible_connection=2203
+server4 ansible_host=localhost ansible_connection=2204
+
+[servers:vars]
+ansible_user=root
+; ansible_ssh_private_key_file=./id_rsa
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_python_interpreter=/usr/bin/python3
+
+
+```
 ## Step 4: Test Connectivity
 ```bash
 # Manual SSH test
