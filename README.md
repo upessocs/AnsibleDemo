@@ -1,22 +1,14 @@
 # AnsibleDemo
-Ansible demo with docker container as servers
 
-# The Need for Ansible in Server Management
+> Ansible demo with docker container as servers
 
-Ansible is a powerful automation tool that addresses several critical challenges in server management:
-
-1. **Scalability**: Managing multiple servers manually becomes impractical as infrastructure grows.
-2. **Consistency**: Ensures identical configurations across all servers, reducing "works on my machine" issues.
-3. **Efficiency**: Automates repetitive tasks, saving time and reducing human error.
-4. **Idempotency**: Operations can be run multiple times without causing unintended changes.
-5. **Infrastructure as Code**: Configuration is version-controlled and documented.
 
 ---
 # Create Docker image and test ssh login
 
 > First create ssh key-pair and then create custom ubuntu-server image with open-ssh configured.
 
-# Testing SSH Key Pair Login with Docker and WSL
+## Testing SSH Key Pair Login with Docker and WSL
 
 Here's a step-by-step guide to create and test SSH key pair authentication between WSL and a Docker container running Ubuntu with OpenSSH server:
 
@@ -31,31 +23,54 @@ ssh-keygen -t rsa -b 4096
 # This creates:
 # Private key: ~/.ssh/id_rsa
 # Public key: ~/.ssh/id_rsa.pub
+# copy keys to current directory to be added to docker images
+cp ~/.ssh/id_rsa.pub .
+cp ~/.ssh/id_rsa .
 ```
+
+> Here’s a simple breakdown of where each key should be placed:
+
+|File	|Location (Machine)	|Purpose|
+|---|---|---|
+|id_rsa (Private Key)	|Your local machine (where you run ssh or Ansible)	|Used to authenticate when connecting to servers. Never share this!|
+|id_rsa.pub (Public Key)	|Remote server (inside ~/.ssh/authorized_keys)	|Grants access to anyone who has the matching private key.|
+
+
 
 ## 2. Create Dockerfile for Ubuntu SSH Server
 
 Create a Dockerfile with the following content:
 
 ```dockerfile
-FROM ubuntu:latest
+FROM ubuntu
 
-# Update and install openssh-server
-RUN apt-get update && \
-    apt-get install -y openssh-server && \
-    mkdir /var/run/sshd
+
+RUN apt update -y
+RUN apt install -y python3 python3-pip openssh-server
+RUN mkdir -p /var/run/sshd
 
 # Configure SSH
-RUN echo 'root:password' | chpasswd
-RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+RUN mkdir -p /run/sshd && \
+    echo 'root:password' | chpasswd && \
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
-# SSH login fix. Otherwise user is kicked off after login
-RUN sed 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd
 
-# Copy the public key from your WSL to the container
+# Create .ssh directory and set proper permissions
+RUN mkdir -p /root/.ssh && \
+    chmod 700 /root/.ssh
+
+# Copy SSH keys (note: this is not secure for production!)
+COPY id_rsa /root/.ssh/id_rsa
 COPY id_rsa.pub /root/.ssh/authorized_keys
-RUN chmod 600 /root/.ssh/authorized_keys
+
+# Set proper permissions for keys
+RUN chmod 600 /root/.ssh/id_rsa && \
+    chmod 644 /root/.ssh/authorized_keys
+
+# Fix for SSH login
+RUN sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
 
 # Expose SSH port
 EXPOSE 22
@@ -81,14 +96,15 @@ rm id_rsa.pub
 
 ```bash
 # Run the container with port mapping
-docker run -d -p 2222:22 -p 8221:8221 --name ssh-test ubuntu-server
+docker run -d -p --rm 2222:22 -p 8221:8221 --name ssh-test-server ubuntu-server
+
 ```
 
 ## 5. Find the Container IP Address
 
 ```bash
 # Get the container's IP address
-docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ssh-test
+docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ssh-test-server
 ```
 
 Note this IP address (e.g., 172.17.0.2)
@@ -98,7 +114,9 @@ Note this IP address (e.g., 172.17.0.2)
 ### Test password authentication:
 ```bash
 ssh root@localhost -p 2222
-# When prompted, enter password: "password"
+# OR
+ssh root@172.17.0.2 
+# If ssh keys are working it likely not use them, Else, When prompted, enter password: "password" 
 ```
 
 ### Test key-based authentication:
@@ -139,48 +157,40 @@ This setup demonstrates both SSH key-based authentication and password authentic
 
 
 
-Here's a simplified and corrected version of your Ansible with Docker tutorial:
 
-# Simplified Ansible with Docker Exercise
 
-## Step 1: Create SSH Key Pair
+
+
+
+
+
+
+# Ansible with Docker Exercise
+
+Using docker image `ubuntu-server` created in previous part
+run 4 test servers named server1 to serve4
+
+#### Step 1: Start multiple containers to act as server (to be configured by ansible)
 ```bash
-mkdir -p .ssh
-ssh-keygen -t rsa -b 4096 -f ./.ssh/ansible_key -N ""
-chmod 600 ./.ssh/ansible_key
-```
-
-## Step 2: Create Dockerfile
-```dockerfile
-FROM ubuntu:latest
-
-RUN apt-get update && \
-    apt-get install -y openssh-server python3 && \
-    mkdir /var/run/sshd && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN echo 'root:root' | chpasswd && \
-    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-
-EXPOSE 22
-CMD ["/usr/sbin/sshd", "-D"]
-```
-
-## Step 3: Build and Run Containers
-```bash
-# Build image
-docker build -t ubuntu-server .
-
-# Create 4 containers
 for i in {1..4}; do
-  docker run -d --name server${i} \
-    -v $(pwd)/.ssh/ansible_key.pub:/root/.ssh/authorized_keys \
-    ubuntu-server
+  echo -e "\n Creating server${i}\n"
+  docker run -d --rm -p 220${i}:22 --name server${i} ubuntu-server
+  echo -e "IP of server${i} is $(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' server${i})"
 done
 ```
 
-## Step 4: Create Ansible Inventory
+#### Step X: To stop all servers (if required)
+```bash
+for i in {1..4}; do
+  docker stop server${i}  
+done
+```
+
+
+## Step 2: Create Ansible Inventory
+
+
+below script will create an update inventory.ini with updated docker container IPs, review this file and you can create your own if needed.
 ```bash
 # Get container IPs
 echo "[servers]" > inventory.ini
@@ -193,21 +203,31 @@ cat << EOF >> inventory.ini
 
 [servers:vars]
 ansible_user=root
-ansible_ssh_private_key_file=./.ssh/ansible_key
+; ansible_ssh_private_key_file=./id_rsa
+ansible_ssh_private_key_file=~/.ssh/id_rsa
 ansible_python_interpreter=/usr/bin/python3
 EOF
 ```
 
-## Step 5: Test Connectivity
+## Step 3: review content of inventory.ini
+```bash
+cat inventory.ini
+```
+
+## Step 4: Test Connectivity
 ```bash
 # Manual SSH test
-ssh -i ./.ssh/ansible_key root@<container_ip>
+ssh -i $(pwd)/id_rsa root@172.17.0.3
+## above on will work on linux and may cause problems on NTFS file systems, then try
+ssh -i ~/.ssh/id_rsa root@172.17.0.3 
 
 # Ansible ping test
 ansible all -i inventory.ini -m ping
+OR
+ansible all -i inventory.ini -m ping -vvv
 ```
 
-## Step 6: Create Playbook (update.yml)
+## Step 5: Create Playbook (update.yml)
 ```yaml
 ---
 - name: Update and configure servers
@@ -231,12 +251,16 @@ ansible all -i inventory.ini -m ping
         content: "Configured by Ansible on {{ inventory_hostname }}"
 ```
 
-## Step 7: Run Playbook
+
+
+
+
+## Step 6: Run Playbook
 ```bash
-ansible-playbook -i inventory.ini update.yml
+ansible-playbook -i inventory.ini playbook1.yml
 ```
 
-## Step 8: Verify Changes
+## Step 7: Verify Changes
 ```bash
 # Using Ansible
 ansible all -i inventory.ini -m command -a "cat /root/ansible_test.txt"
@@ -247,22 +271,140 @@ for i in {1..4}; do
 done
 ```
 
-## Cleanup
+## Step 8: Cleanup
 ```bash
 # Stop and remove containers
 for i in {1..4}; do docker rm -f server${i}; done
 ```
 
-Key improvements made:
-1. Simplified Dockerfile with proper cleanup
-2. Fixed volume mounting for SSH keys
-3. Corrected inventory file generation
-4. Simplified playbook to focus on core tasks
-5. Added proper verification steps
-6. Removed unnecessary port mapping since we're using container IPs
-7. Fixed SSH key permissions
-8. Added proper cleanup command
 
-The workflow is now:
-1. Setup SSH keys → 2. Build image → 3. Launch containers → 4. Create inventory → 5. Test → 6. Run playbook → 7. Verify → 8. Cleanup
 
+> The workflow is now:
+> 1. Setup SSH keys → 2. Build image → 3. Launch containers → 4. Create inventory → 5. Test → 6. Run playbook → 7. Verify → 8. Cleanup
+
+
+
+---
+
+Try this playbook also
+
+`playbook1.yml`
+```yml
+---
+- name: Configure multiple servers
+  hosts: servers
+  become: yes
+
+  tasks:
+    - name: Update apt package index
+      apt:
+        update_cache: yes
+
+    - name: Install Python 3.13 (or latest available)
+      apt:
+        name: python3
+        state: latest
+
+    - name: Create test file with content
+      copy:
+        dest: /root/test_file.txt
+        content: |
+          This is a test file created by Ansible
+          Server name: {{ inventory_hostname }}
+          Current date: {{ ansible_date_time.date }}
+
+    - name: Display system information
+      command: uname -a
+      register: uname_output
+      
+    - name: Show disk space
+      command: df -h
+      register: disk_space
+
+    - name: Print results
+      debug:
+        msg: 
+          - "System info: {{ uname_output.stdout }}"
+          - "Disk space: {{ disk_space.stdout_lines }}"
+```
+
+
+---
+
+# The Need for Ansible in Server Management
+
+### Ansible is a powerful automation tool that addresses several critical challenges in server management:
+
+1. **Scalability**: Managing multiple servers manually becomes impractical as infrastructure grows.
+2. **Consistency**: Ensures identical configurations across all servers, reducing "works on my machine" issues.
+3. **Efficiency**: Automates repetitive tasks, saving time and reducing human error.
+4. **Idempotency**: Operations can be run multiple times without causing unintended changes.
+5. **Infrastructure as Code**: Configuration is version-controlled and documented.
+
+
+### **Key Features of Ansible**  
+1. **Agentless** – Uses SSH (no need to install software on managed nodes).  
+2. **Idempotent** – Ensures desired state without repeating changes unnecessarily.  
+3. **YAML-Based Playbooks** – Simple, human-readable automation scripts.  
+4. **Modules** – 3000+ built-in modules for cloud, containers, networking, etc.  
+5. **Push-Based** – Executes tasks from a control machine.  
+6. **Infrastructure as Code (IaC)** – Supports declarative configuration management.  
+
+Official Website: **[https://www.ansible.com](https://www.ansible.com)**  
+Documentation: **[https://docs.ansible.com](https://docs.ansible.com)**  
+
+---
+
+### **Installation Instructions**  
+
+#### **1. Install via `pip` (Python Package Manager)**  
+```bash
+# Install Ansible globally
+pip install ansible
+
+# Verify installation
+ansible --version
+```
+**Best for**: Latest versions, macOS/Linux, or Python environments.  
+
+#### **2. Install via `apt` (Debian/Ubuntu)**  
+```bash
+# Update packages
+sudo apt update -y
+
+# Install Ansible
+sudo apt install ansible -y
+
+# Verify
+ansible --version
+```
+**Best for**: Stable versions on Ubuntu/Debian.  
+
+#### **3. Post-Installation Check**  
+```bash
+# Test with a local ping
+ansible localhost -m ping
+```
+**Expected Output**:  
+```json
+localhost | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+```
+
+
+---
+
+### **Why Choose Ansible?**  
+- **No Agents**: Uses SSH/WinRM.  
+- **Extensible**: Custom modules via Python.  
+- **Multi-Platform**: Linux, Windows, cloud (AWS/Azure), networking devices.  
+
+For troubleshooting, check:  
+```bash
+ansible-doc -l         # List all modules
+ansible-doc apt        # View module docs
+# do try
+ansible-doc -l | grep aws
+```  
